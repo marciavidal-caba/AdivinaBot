@@ -116,7 +116,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 2. FUNCIONES DE APOYO Y CARGA DE DATOS
+# 2. PROCESAMIENTO Y LECTURA ROBUSTA DE EXCEL
 # -----------------------------------------------------------------------------
 def normalizar_texto(texto):
     if not isinstance(texto, str):
@@ -125,26 +125,47 @@ def normalizar_texto(texto):
     texto = re.sub(r'[^a-zA-Z0-9\s]', '', texto)
     return texto.strip().upper()
 
+def obtener_columna(df, opciones):
+    """Busca en el DataFrame la primera columna que coincida con la lista de opciones."""
+    for col in df.columns:
+        col_limpia = col.strip().upper()
+        for opcion in opciones:
+            if opcion.upper() in col_limpia:
+                return col
+    return None
+
 def cargar_base_datos():
-    # Intenta buscar el archivo con el nombre real que subiste
-    nombres_posibles = ["Adivinanzas_Estudiantes_Padlet.xlsx", "adivinanzas.xlsx"]
+    archivos = ["Adivinanzas_Estudiantes_Padlet.xlsx", "adivinanzas.xlsx"]
     archivo_encontrado = None
     
-    for nombre in nombres_posibles:
-        if os.path.exists(nombre):
-            archivo_encontrado = nombre
+    for arc in archivos:
+        if os.path.exists(arc):
+            archivo_encontrado = arc
             break
 
     if archivo_encontrado:
         df = pd.read_excel(archivo_encontrado)
-        # Normaliza encabezados por si tienen espacios extras
-        df.columns = df.columns.str.strip().str.upper()
-        return df
+        
+        # Mapeo flexible de columnas para evitar KeyError
+        col_autor = obtener_columna(df, ["AUTOR", "ESTUDIANTE", "ALUMNO", "NOMBRE"]) or df.columns[0]
+        col_adivinanza = obtener_columna(df, ["ADIVINANZA", "TEXTO", "CONSIGNA"]) or df.columns[1]
+        col_respuesta = obtener_columna(df, ["RESPUESTA", "SOLUCION", "PALABRA"]) or df.columns[2]
+        col_pista = obtener_columna(df, ["PISTA", "ARCHIVO_PISTA", "LAMINA"]) or df.columns[3]
+        col_dibujo = obtener_columna(df, ["DIBUJO", "ARCHIVO_DIBUJO", "ILUSTRACION"]) or df.columns[4]
+
+        # Estandarizado de estructura
+        df_normalizado = pd.DataFrame({
+            "AUTOR": df[col_autor],
+            "ADIVINANZA": df[col_adivinanza],
+            "RESPUESTA": df[col_respuesta],
+            "ARCHIVO_PISTA": df[col_pista],
+            "ARCHIVO_DIBUJO": df[col_dibujo]
+        })
+        return df_normalizado
     else:
-        # Datos de respaldo si no encuentra el Excel
+        # Resguardo si no se detecta el archivo
         return pd.DataFrame([
             {
-                "ID": 1,
                 "AUTOR": "CIRO 👦",
                 "ADIVINANZA": "CON RUEDAS Y UN MOTOR, POR LAS CALLES VOY. CON COMBUSTIBLE MEJOR, A TU DESTINO TE LLEVO HOY. ¿QUÉ SOY?",
                 "RESPUESTA": "AUTO",
@@ -153,7 +174,9 @@ def cargar_base_datos():
             }
         ])
 
-# Inicialización de variables de sesión
+# -----------------------------------------------------------------------------
+# 3. CONTROL DE ESTADO DE NAVEGACIÓN
+# -----------------------------------------------------------------------------
 if 'pagina' not in st.session_state:
     st.session_state.pagina = 'INICIO'
 
@@ -195,8 +218,8 @@ elif st.session_state.pagina == 'JUEGO':
         </div>
     """, unsafe_allow_html=True)
 
-    texto_adivinanza = str(adivinanza_actual['ADIVINANZA']).upper()
-    autor_adivinanza = str(adivinanza_actual['AUTOR']).upper()
+    texto_adivinanza = str(adivinanza_actual['ADIVINANZA']).strip().upper()
+    autor_adivinanza = str(adivinanza_actual['AUTOR']).strip().upper()
 
     st.markdown("<div class='padlet-card'>", unsafe_allow_html=True)
     st.markdown(f"### 📝 ADIVINANZA DE {autor_adivinanza}")
@@ -207,8 +230,7 @@ elif st.session_state.pagina == 'JUEGO':
 
     with col1:
         st.markdown("#### 🔊 LECTURA CON IA")
-        # Botón con síntesis de voz nativa del navegador
-        texto_limpio = texto_adivinanza.replace('"', '').replace("'", "")
+        texto_limpio = texto_adivinanza.replace('"', '').replace("'", "").replace('\n', ' ')
         html_voz = f"""
             <div style="text-align: center;">
                 <button onclick="speechSynthesis.cancel(); var msg = new SpeechSynthesisUtterance('{texto_limpio}'); msg.lang = 'es-AR'; msg.rate = 0.85; speechSynthesis.speak(msg);" 
@@ -230,13 +252,15 @@ elif st.session_state.pagina == 'JUEGO':
 
     with col2:
         st.markdown("#### 🧩 LÁMINA DE PISTAS")
-        nombre_pista = str(adivinanza_actual['ARCHIVO_PISTA'])
-        ruta_pista = os.path.join("Pistas", nombre_pista)
+        nombre_pista = str(adivinanza_actual['ARCHIVO_PISTA']).strip()
         
-        if os.path.exists(ruta_pista):
+        # Búsqueda adaptable de carpetas
+        ruta_pista = os.path.join("Pistas", nombre_pista) if os.path.exists(os.path.join("Pistas", nombre_pista)) else os.path.join("pistas", nombre_pista)
+        
+        if os.path.exists(ruta_pista) and not os.path.isdir(ruta_pista):
             st.image(ruta_pista, use_container_width=True)
         else:
-            st.info(f"🖼️ Pista: {nombre_pista}")
+            st.info(f"🖼️ [PISTA: {nombre_pista}]")
 
     st.markdown("---")
     respuesta_ingresada = st.text_input("✍️ ESCRIBÍ TU RESPUESTA AQUÍ:", key=f"input_{st.session_state.indice_adivinanza}", placeholder="ESCRIBÍ ACÁ TU RESPUESTA...")
@@ -263,13 +287,13 @@ elif st.session_state.pagina == 'EXITO':
     st.markdown(f"<h2>EL PRODUCTO ES: {str(adivinanza_actual['RESPUESTA']).upper()} 🚀</h2>")
     st.markdown(f"### DIBUJO REALIZADO POR: {str(adivinanza_actual['AUTOR']).upper()}")
     
-    nombre_dibujo = str(adivinanza_actual['ARCHIVO_DIBUJO'])
-    ruta_dibujo = os.path.join("Dibujos", nombre_dibujo)
+    nombre_dibujo = str(adivinanza_actual['ARCHIVO_DIBUJO']).strip()
+    ruta_dibujo = os.path.join("Dibujos", nombre_dibujo) if os.path.exists(os.path.join("Dibujos", nombre_dibujo)) else os.path.join("dibujos", nombre_dibujo)
     
-    if os.path.exists(ruta_dibujo):
+    if os.path.exists(ruta_dibujo) and not os.path.isdir(ruta_dibujo):
         st.image(ruta_dibujo, caption=f"Obra de {adivinanza_actual['AUTOR']}", use_container_width=True)
     else:
-        st.info(f"🎨 Dibujo: {nombre_dibujo}")
+        st.info(f"🎨 [DIBUJO REVELADO: {nombre_dibujo}]")
         
     st.markdown("</div>", unsafe_allow_html=True)
 
